@@ -469,9 +469,10 @@ def update_user_list(server):
             conn.close()
             user_list.append({'username': username, 'avatar': avatar, 'status': status, 'online': online, 'last_seen': last_seen})
     for sid in servers[server]['users']:
-        channel = user_sessions[sid]['channel']
-        if channel:
-            emit('user_list', {'users': user_list}, room=f'{server}:{channel}')
+        if sid in user_sessions:
+            channel = user_sessions[sid].get('channel')
+            if channel:
+                emit('user_list', {'users': user_list}, room=f'{server}:{channel}')
 
 @socketio.on('get_server_list')
 def handle_get_server_list():
