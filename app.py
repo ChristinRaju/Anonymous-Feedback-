@@ -443,7 +443,7 @@ def handle_disconnect():
     user = user_sessions.get(sid)
     if user:
         server = user['server']
-        if server and sid in servers[server]['users']:
+        if server and server in servers and sid in servers[server]['users']:
             servers[server]['users'].remove(sid)
             update_user_list(server)
         del user_sessions[sid]
@@ -477,6 +477,37 @@ def update_user_list(server):
 @socketio.on('get_server_list')
 def handle_get_server_list():
     emit('server_list', {'servers': list(servers.keys())}, broadcast=True)
+
+@socketio.on('delete_server')
+def handle_delete_server(data):
+    server_name = data.get('server')
+    print(f"Deleting server: {server_name}")  # Debug
+
+    if server_name in servers:
+        # Remove from in-memory servers dictionary
+        servers.pop(server_name)
+
+        # Remove from database
+        conn = sqlite3.connect('chat.db')
+        c = conn.cursor()
+        # Get server id
+        c.execute('SELECT id FROM servers WHERE name=?', (server_name,))
+        row = c.fetchone()
+        if row:
+            server_id = row[0]
+            # Delete channels for this server
+            c.execute('DELETE FROM channels WHERE server_id=?', (server_id,))
+            # Delete messages for this server
+            c.execute('DELETE FROM messages WHERE server_id=?', (server_id,))
+            # Delete pinned messages for this server
+            c.execute('DELETE FROM pinned_messages WHERE server_id=?', (server_id,))
+            # Delete the server itself
+            c.execute('DELETE FROM servers WHERE id=?', (server_id,))
+            conn.commit()
+        conn.close()
+
+        # Emit update to all clients
+        emit('server_deleted', {'server': server_name}, broadcast=True)
 
 if __name__ == '__main__':
     socketio.run(app, debug=True)
