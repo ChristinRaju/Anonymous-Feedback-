@@ -95,6 +95,11 @@ function renderUserList(users) {
 }
 
 // --- Socket.IO Events ---
+function highlightMentions(text) {
+  // Simple placeholder implementation: return text as is
+  return text;
+}
+
 socket.on('session', data => {
   myUsername = data.username;
   myAvatar = data.avatar;
@@ -161,6 +166,7 @@ socket.on('profile_updated', data => {
 
 // --- UI Events ---
 chatForm.addEventListener('submit', function(e) {
+  console.log('[DEBUG] Form submit event triggered');
   e.preventDefault();
   const msg = messageInput.value.trim();
   if (msg && currentServer && currentChannel) {
@@ -610,3 +616,5 @@ function renderPinnedBar() {
     pinnedBar.appendChild(div);
   });
 }
+
+
