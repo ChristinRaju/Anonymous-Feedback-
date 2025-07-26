@@ -94,7 +94,18 @@ function renderUserList(users) {
   });
 }
 
+  
 // --- Socket.IO Events ---
+
+socket.on('server_deleted', ({ server }) => {
+  console.log('Server deleted:', server);
+
+  // Remove server from sidebar
+  const serverElement = document.querySelector(`[data-server-name="${server}"]`);
+  if (serverElement) {
+    serverElement.remove();
+  }
+});
 function highlightMentions(text) {
   // Simple placeholder implementation: return text as is
   return text;
@@ -524,15 +535,23 @@ function createMessageDiv(username, avatar, msg, self = false, msgId = null, tim
 function renderServers(servers) {
   serverSidebar.querySelectorAll('.server:not(.add-server)').forEach(e => e.remove());
 
+  // Remove existing context menu if any
+  const existingMenu = document.getElementById('server-context-menu');
+  if (existingMenu) {
+    existingMenu.remove();
+  }
+
   servers.forEach(server => {
     const div = document.createElement('div');
     div.className = 'server' + (server === currentServer ? ' selected' : '');
+    div.setAttribute('data-server-name', server);  // Add this attribute for deletion selector
 
     // Use the first letter of the server name in uppercase as the avatar
     const avatar = server.charAt(0).toUpperCase();
 
     // Only show the avatar (first letter) inside the circle icon
     div.innerHTML = `<span class='avatar'>${avatar}</span>`;
+
     div.title = server;
 
     div.onclick = () => {
@@ -549,6 +568,57 @@ function renderServers(servers) {
         userListDiv.innerHTML = '';
       }
     };
+
+    // Add context menu event for right click
+    div.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      // Remove any existing context menu
+      const oldMenu = document.getElementById('server-context-menu');
+      if (oldMenu) oldMenu.remove();
+
+      // Create context menu div
+      const menu = document.createElement('div');
+      menu.id = 'server-context-menu';
+      menu.style.position = 'fixed';
+      menu.style.top = `${e.clientY}px`;
+      menu.style.left = `${e.clientX}px`;
+      menu.style.background = '#2f3136';
+      menu.style.border = '1px solid #23272a';
+      menu.style.borderRadius = '6px';
+      menu.style.padding = '0.5rem 0';
+      menu.style.zIndex = '1000';
+      menu.style.minWidth = '120px';
+      menu.style.color = '#fff';
+      menu.style.fontSize = '0.9rem';
+      menu.style.boxShadow = '0 2px 10px rgba(0,0,0,0.5)';
+
+      // Add Delete option
+      const deleteOption = document.createElement('div');
+      deleteOption.textContent = 'Delete Server';
+      deleteOption.style.padding = '0.5rem 1rem';
+      deleteOption.style.cursor = 'pointer';
+      deleteOption.onmouseenter = () => deleteOption.style.background = '#5865f2';
+      deleteOption.onmouseleave = () => deleteOption.style.background = 'transparent';
+      deleteOption.onclick = () => {
+        if (confirm(`Are you sure you want to delete the server "${server}"?`)) {
+          socket.emit('delete_server', { server });
+          menu.remove();
+        }
+      };
+      menu.appendChild(deleteOption);
+
+      // Append menu to body
+      document.body.appendChild(menu);
+
+      // Remove menu on click elsewhere
+      const removeMenu = (event) => {
+        if (!menu.contains(event.target)) {
+          menu.remove();
+          document.removeEventListener('click', removeMenu);
+        }
+      };
+      document.addEventListener('click', removeMenu);
+    });
 
     serverSidebar.insertBefore(div, addServerBtn);
   });
@@ -616,5 +686,4 @@ function renderPinnedBar() {
     pinnedBar.appendChild(div);
   });
 }
-
 
