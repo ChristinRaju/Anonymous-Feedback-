@@ -31,6 +31,26 @@ const addChannelName = document.getElementById('add-channel-name');
 const addChannelSave = document.getElementById('add-channel-save');
 const addChannelCancel = document.getElementById('add-channel-cancel');
 
+const clearChatBtn = document.getElementById('clear-chat-btn');
+
+clearChatBtn.addEventListener('click', () => {
+  if (!currentServer || !currentChannel) {
+    alert('Please select a server and channel before clearing chat.');
+    return;
+  }
+  // Clear local message history and UI for current channel
+  clearMessageHistoryForCurrentChannel();
+  messagesDiv.innerHTML = '';
+  // Emit event to server to clear chat messages
+  socket.emit('clear_chat');
+});
+
+socket.on('chat_cleared', () => {
+  // Clear chat UI and message history when server confirms clear for current channel
+  clearMessageHistoryForCurrentChannel();
+  messagesDiv.innerHTML = '';
+});
+
 let myUsername = '';
 let myAvatar = '';
 let currentServer = null;
@@ -145,7 +165,9 @@ socket.on('channel_list', data => {
 socket.on('joined_channel', data => {
   chatHeader.textContent = `${currentServer} / #${data.channel}`;
   chatForm.style.display = '';
-  messagesDiv.innerHTML = '';
+  // Render messages for the joined channel from messageHistory
+  const currentMessages = getMessageHistoryForCurrentChannel();
+  renderMessages(currentMessages);
 });
 
 socket.on('typing', data => {
@@ -183,8 +205,9 @@ chatForm.addEventListener('submit', function(e) {
   if (msg && currentServer && currentChannel) {
     // Generate a temporary unique id for the message
     const tempId = 'temp-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-    // Add the message to messageHistory and render immediately
-    messageHistory.push({
+    // Add the message to messageHistory for current channel and render immediately
+    const currentMessages = getMessageHistoryForCurrentChannel();
+    currentMessages.push({
       username: myUsername,
       avatar: myAvatar,
       text: msg,
@@ -193,7 +216,8 @@ chatForm.addEventListener('submit', function(e) {
       timestamp: new Date().toISOString(),
       status: ''
     });
-    renderMessages(messageHistory);
+    setMessageHistoryForCurrentChannel(currentMessages);
+    renderMessages(currentMessages);
     // Emit the message to the server
     socket.emit('message', {
       msg,
@@ -347,17 +371,43 @@ function renderMessages(messageList) {
 }
 
 // Store messages for grouping
-let messageHistory = [];
+// Store messages per channel for grouping
+let messageHistory = {};
+
+function getCurrentChannelKey() {
+  return currentServer && currentChannel ? `${currentServer}:${currentChannel}` : null;
+}
+
+function getMessageHistoryForCurrentChannel() {
+  const key = getCurrentChannelKey();
+  if (!key) return [];
+  if (!messageHistory[key]) messageHistory[key] = [];
+  return messageHistory[key];
+}
+
+function setMessageHistoryForCurrentChannel(messages) {
+  const key = getCurrentChannelKey();
+  if (!key) return;
+  messageHistory[key] = messages;
+}
+
+function clearMessageHistoryForCurrentChannel() {
+  const key = getCurrentChannelKey();
+  if (!key) return;
+  messageHistory[key] = [];
+}
 
 socket.on('message', data => {
   console.log('[DEBUG] Received message:', data);
   const self = data.username === myUsername && data.avatar === myAvatar;
 
+  const currentMessages = getMessageHistoryForCurrentChannel();
+
   // Replace the temp message if tempId exists
   if (self && data.tempId) {
-    const index = messageHistory.findIndex(m => m.id === data.tempId);
+    const index = currentMessages.findIndex(m => m.id === data.tempId);
     if (index !== -1) {
-      messageHistory[index] = {
+      currentMessages[index] = {
         username: data.username,
         avatar: data.avatar,
         text: data.msg,
@@ -366,14 +416,15 @@ socket.on('message', data => {
         timestamp: data.timestamp,
         status: data.status || ''
       };
-      renderMessages(messageHistory);
+      setMessageHistoryForCurrentChannel(currentMessages);
+      renderMessages(currentMessages);
       return;
     }
   }
 
   // Add message only if not already present
-  if (!messageHistory.some(msg => msg.id === data.id)) {
-    messageHistory.push({
+  if (!currentMessages.some(msg => msg.id === data.id)) {
+    currentMessages.push({
       username: data.username,
       avatar: data.avatar,
       text: data.msg,
@@ -382,7 +433,8 @@ socket.on('message', data => {
       timestamp: data.timestamp,
       status: data.status || ''
     });
-    renderMessages(messageHistory);
+    setMessageHistoryForCurrentChannel(currentMessages);
+    renderMessages(currentMessages);
   } else {
     console.log('[DEBUG] Duplicate message ignored:', data);
   }
@@ -686,4 +738,3 @@ function renderPinnedBar() {
     pinnedBar.appendChild(div);
   });
 }
-
