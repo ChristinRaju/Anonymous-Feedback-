@@ -1,3 +1,4 @@
+
 console.log("✅ chat.js loaded");
 
 
@@ -224,7 +225,8 @@ chatForm.addEventListener('submit', function(e) {
       username: myUsername,
       avatar: myAvatar,
       server: currentServer,
-      channel: currentChannel
+      channel: currentChannel,
+      tempId: tempId
     });
     messageInput.value = '';
   } else {
@@ -747,3 +749,4 @@ function renderPinnedBar() {
     pinnedBar.appendChild(div);
   });
 }
+
