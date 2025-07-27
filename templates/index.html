@@ -75,7 +75,10 @@
     </div>
     <div class="chat-section">
       <div class="pinned-bar" id="pinned-bar"></div>
-      <div class="chat-header" id="chat-header">Select a channel</div>
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 1rem; border-bottom: 1px solid #23272a; color: #fff; font-size: 1.1rem;">
+        <div id="chat-header">Select a channel</div>
+        <button id="clear-chat-btn" class="btn" style="background: #f04747; padding: 0.5rem 1rem; font-size: 0.9rem;">Clear Chat</button>
+      </div>
       <div class="chat-messages" id="messages"></div>
       <div class="typing" id="typing-indicator" style="display:none;"></div>
       <form class="chat-form" id="chat-form" style="display:none;">
