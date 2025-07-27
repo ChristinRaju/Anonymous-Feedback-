@@ -509,5 +509,29 @@ def handle_delete_server(data):
         # Emit update to all clients
         emit('server_deleted', {'server': server_name}, broadcast=True)
 
+@socketio.on('clear_chat')
+def handle_clear_chat():
+    sid = request.sid
+    user = user_sessions.get(sid)
+    if not user:
+        return
+    server = user.get('server')
+    channel = user.get('channel')
+    if not server or not channel:
+        return
+    server_id = servers[server]['id']
+    conn = sqlite3.connect('chat.db')
+    c = conn.cursor()
+    c.execute('SELECT id FROM channels WHERE name=? AND server_id=?', (channel, server_id))
+    row = c.fetchone()
+    if row:
+        channel_id = row[0]
+        # Delete all messages for this server and channel
+        c.execute('DELETE FROM messages WHERE server_id=? AND channel_id=?', (server_id, channel_id))
+        conn.commit()
+        # Emit event to clear chat for all clients in the room
+        socketio.emit('chat_cleared', room=f'{server}:{channel}')
+    conn.close()
+
 if __name__ == '__main__':
     socketio.run(app, debug=True)
