@@ -343,6 +343,15 @@ function editMessage(msgId, div, oldMsg) {
 
 function deleteMessage(msgId) {
   if (confirm('Delete this message?')) {
+    // Remove message from local messageHistory for current channel immediately
+    const currentMessages = getMessageHistoryForCurrentChannel();
+    const index = currentMessages.findIndex(m => m.id === msgId);
+    if (index !== -1) {
+      currentMessages.splice(index, 1);
+      setMessageHistoryForCurrentChannel(currentMessages);
+      renderMessages(currentMessages);
+    }
+    // Emit delete event to server
     socket.emit('delete_message', { id: msgId });
   }
 }
