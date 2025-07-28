@@ -254,7 +254,36 @@ def handle_edit_message(data):
     if row and row[0] == username and row[1] == avatar:
         c.execute('UPDATE messages SET text=? WHERE id=?', (new_text, msg_id))
         conn.commit()
-        socketio.emit('message_update', {'id': msg_id}, broadcast=True)
+        # Fetch updated message details to emit
+        c.execute('SELECT server_id, channel_id, username, avatar, text, timestamp FROM messages WHERE id=?', (msg_id,))
+        updated_msg = c.fetchone()
+        if updated_msg:
+            server_id, channel_id, username, avatar, text, timestamp = updated_msg
+            # Get server and channel names
+            c.execute('SELECT name FROM servers WHERE id=?', (server_id,))
+            server_row = c.fetchone()
+            server_name = server_row[0] if server_row else ''
+            c.execute('SELECT name FROM channels WHERE id=?', (channel_id,))
+            channel_row = c.fetchone()
+            channel_name = channel_row[0] if channel_row else ''
+            # Get reactions
+            c.execute('SELECT emoji, username, avatar FROM reactions WHERE message_id=?', (msg_id,))
+            rows = c.fetchall()
+            reactions = {}
+            for emoji, uname, av in rows:
+                if emoji not in reactions:
+                    reactions[emoji] = []
+                reactions[emoji].append({'username': uname, 'avatar': av})
+            socketio.emit('message_update', {
+                'id': msg_id,
+                'server': server_name,
+                'channel': channel_name,
+                'username': username,
+                'avatar': avatar,
+                'msg': text,
+                'timestamp': timestamp,
+                'reactions': reactions
+            }, broadcast=True)
     conn.close()
 
 @socketio.on('delete_message')
@@ -271,7 +300,8 @@ def handle_delete_message(data):
     if row and row[0] == username and row[1] == avatar:
         c.execute('DELETE FROM messages WHERE id=?', (msg_id,))
         conn.commit()
-        socketio.emit('message_update', {'id': msg_id}, broadcast=True)
+        # Emit message_update with msg set to None to indicate deletion
+        socketio.emit('message_update', {'id': msg_id, 'msg': None}, broadcast=True)
     conn.close()
 
 # Update message sending to include id and timestamp
