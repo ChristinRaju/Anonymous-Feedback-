@@ -1,4 +1,3 @@
-
 console.log("✅ chat.js loaded");
 
 
@@ -225,8 +224,7 @@ chatForm.addEventListener('submit', function(e) {
       username: myUsername,
       avatar: myAvatar,
       server: currentServer,
-      channel: currentChannel,
-      tempId: tempId
+      channel: currentChannel
     });
     messageInput.value = '';
   } else {
@@ -337,6 +335,14 @@ function editMessage(msgId, div, oldMsg) {
       const newMsg = input.value.trim();
       if (newMsg && newMsg !== oldMsg) {
         socket.emit('edit_message', { id: msgId, text: newMsg });
+        // Update messageHistory immediately to reflect change in UI
+        const currentMessages = getMessageHistoryForCurrentChannel();
+        const index = currentMessages.findIndex(msg => msg.id === msgId);
+        if (index !== -1) {
+          currentMessages[index].text = newMsg;
+          setMessageHistoryForCurrentChannel(currentMessages);
+          renderMessages(currentMessages);
+        }
       }
       input.replaceWith(document.createTextNode(newMsg || oldMsg));
     }
@@ -345,15 +351,14 @@ function editMessage(msgId, div, oldMsg) {
 
 function deleteMessage(msgId) {
   if (confirm('Delete this message?')) {
-    // Remove message from local messageHistory for current channel immediately
+    // Immediately remove message from UI for better UX
     const currentMessages = getMessageHistoryForCurrentChannel();
-    const index = currentMessages.findIndex(m => m.id === msgId);
+    const index = currentMessages.findIndex(msg => msg.id === msgId);
     if (index !== -1) {
       currentMessages.splice(index, 1);
       setMessageHistoryForCurrentChannel(currentMessages);
       renderMessages(currentMessages);
     }
-    // Emit delete event to server
     socket.emit('delete_message', { id: msgId });
   }
 }
@@ -452,9 +457,23 @@ socket.on('message', data => {
 });
 
 socket.on('message_update', data => {
-  // Reload channel to update message grouping
-  if (currentServer && currentChannel) {
-    socket.emit('join_channel', { server: currentServer, channel: currentChannel });
+  // Update or remove the specific message in messageHistory and re-render messages
+  const currentMessages = getMessageHistoryForCurrentChannel();
+  const index = currentMessages.findIndex(msg => msg.id === data.id);
+  if (index !== -1) {
+    if (data.msg === undefined || data.msg === null) {
+      // Message deleted, remove from messageHistory
+      currentMessages.splice(index, 1);
+    } else {
+      // Update message properties
+      currentMessages[index].text = data.msg || currentMessages[index].text;
+      currentMessages[index].timestamp = data.timestamp || currentMessages[index].timestamp;
+      currentMessages[index].username = data.username || currentMessages[index].username;
+      currentMessages[index].avatar = data.avatar || currentMessages[index].avatar;
+      currentMessages[index].reactions = data.reactions || currentMessages[index].reactions || {};
+    }
+    setMessageHistoryForCurrentChannel(currentMessages);
+    renderMessages(currentMessages);
   }
 });
 
@@ -749,4 +768,3 @@ function renderPinnedBar() {
     pinnedBar.appendChild(div);
   });
 }
-
