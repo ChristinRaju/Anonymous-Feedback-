@@ -308,6 +308,9 @@ def handle_delete_message(data):
 @socketio.on('message')
 def handle_message(data):
     temp_id = data.get('tempId')  # Receive tempId from client
+    ack = None
+    if len(request.args) > 0:
+        ack = request.args[0]
 
     sid = request.sid
     server = user_sessions[sid]['server']
@@ -318,6 +321,7 @@ def handle_message(data):
     status = user_sessions[sid].get('status', '')
     print(f"[DEBUG] message event: sid={sid}, server={server}, channel={channel}, msg={msg}", flush=True)
     if server and channel:
+        print(f"[DEBUG] Saving message to DB: {msg}", flush=True)
         # Save message to DB
         server_id = servers[server]['id']
         conn = sqlite3.connect('chat.db')
@@ -340,6 +344,7 @@ def handle_message(data):
                     reactions[emoji] = []
                 reactions[emoji].append({'username': uname, 'avatar': av})
             conn.commit()
+            print(f"[DEBUG] Emitting message event for message id {msg_id}", flush=True)
             socketio.emit('message', {
                 'msg': msg,
                 'username': username,
@@ -351,6 +356,8 @@ def handle_message(data):
                 'tempId': temp_id  # Include it back
             }, room=f'{server}:{channel}')
         conn.close()
+    if ack:
+        ack()
 
 @socketio.on('typing')
 def handle_typing(data):
