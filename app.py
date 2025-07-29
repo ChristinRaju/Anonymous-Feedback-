@@ -8,6 +8,13 @@ import sqlite3
 import eventlet
 eventlet.monkey_patch()
 
+from flask import Flask, render_template, request, session
+from flask_socketio import SocketIO, join_room, leave_room, emit
+import os
+import random
+import string
+import sqlite3
+
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 socketio = SocketIO(app, async_mode='eventlet')
@@ -283,7 +290,7 @@ def handle_edit_message(data):
                 'msg': text,
                 'timestamp': timestamp,
                 'reactions': reactions
-            }, broadcast=True)
+            }, broadcast=True, namespace='/')
     conn.close()
 
 @socketio.on('delete_message')
@@ -301,16 +308,13 @@ def handle_delete_message(data):
         c.execute('DELETE FROM messages WHERE id=?', (msg_id,))
         conn.commit()
         # Emit message_update with msg set to None to indicate deletion
-        socketio.emit('message_update', {'id': msg_id, 'msg': None}, broadcast=True)
+        socketio.emit('message_update', {'id': msg_id, 'msg': None}, broadcast=True, namespace='/')
     conn.close()
 
 # Update message sending to include id and timestamp
 @socketio.on('message')
-def handle_message(data):
+def handle_message(data, ack=None):
     temp_id = data.get('tempId')  # Receive tempId from client
-    ack = None
-    if len(request.args) > 0:
-        ack = request.args[0]
 
     sid = request.sid
     server = user_sessions[sid]['server']
@@ -408,7 +412,7 @@ def broadcast_reactions(msg_id):
         if emoji not in reactions:
             reactions[emoji] = []
         reactions[emoji].append({'username': username, 'avatar': avatar})
-    socketio.emit('reactions_update', {'message_id': msg_id, 'reactions': reactions}, broadcast=True)
+    socketio.emit('reactions_update', {'message_id': msg_id, 'reactions': reactions}, broadcast=True, namespace='/')
 
 @socketio.on('pin_message')
 def handle_pin_message(data):
