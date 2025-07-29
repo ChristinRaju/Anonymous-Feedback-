@@ -110,23 +110,69 @@ def load_servers_channels():
 init_db()
 load_servers_channels()
 
+from flask import redirect, url_for, session as flask_session
+
 @app.route('/')
 def index():
+    if not flask_session.get('user_id'):
+        return redirect(url_for('login'))
     return render_template('index.html', servers=servers)
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    from flask import request
+    import sqlite3
+    if flask_session.get('user_id'):
+        return redirect(url_for('index'))
+    if request.method == 'POST':
+        nickname = request.form.get('nickname')
+        avatar = request.form.get('avatar')
+        status = request.form.get('status', '')
+        if not nickname or not avatar:
+            return render_template('login.html', error="Nickname and Avatar are required.")
+        # Save user info in DB and session
+        conn = sqlite3.connect('chat.db')
+        c = conn.cursor()
+        # Generate a session id for user
+        import uuid
+        user_session_id = str(uuid.uuid4())
+        # Insert or update user in users table
+        c.execute('SELECT id FROM users WHERE username=? AND avatar=?', (nickname, avatar))
+        row = c.fetchone()
+        if row:
+            user_id = row[0]
+            c.execute('UPDATE users SET status=?, session_id=?, online=1, last_seen=datetime("now") WHERE id=?', (status, user_session_id, user_id))
+        else:
+            c.execute('INSERT INTO users (username, avatar, status, session_id, online, last_seen) VALUES (?, ?, ?, ?, 1, datetime("now"))', (nickname, avatar, status, user_session_id))
+            user_id = c.lastrowid
+        conn.commit()
+        conn.close()
+        flask_session['user_id'] = user_id
+        flask_session['user_session_id'] = user_session_id
+        flask_session['username'] = nickname
+        flask_session['avatar'] = avatar
+        flask_session['status'] = status
+        return redirect(url_for('index'))
+    return render_template('login.html')
 
 # Socket.IO events
 # On connect, set online=1 and update last_seen
 @socketio.on('connect')
 def handle_connect(auth):
+    from flask import session as flask_session
     print(f"[DEBUG] New client connected: {request.sid}")
     sid = request.sid
     conn = sqlite3.connect('chat.db')
     c = conn.cursor()
-    c.execute('SELECT username, avatar, status FROM users WHERE session_id=?', (sid,))
+    user_session_id = flask_session.get('user_session_id')
+    if user_session_id:
+        c.execute('SELECT username, avatar, status FROM users WHERE session_id=?', (user_session_id,))
+    else:
+        c.execute('SELECT username, avatar, status FROM users WHERE session_id=?', (sid,))
     row = c.fetchone()
     if row:
         username, avatar, status = row
-        c.execute('UPDATE users SET online=1, last_seen=datetime("now") WHERE session_id=?', (sid,))
+        c.execute('UPDATE users SET online=1, last_seen=datetime("now") WHERE session_id=?', (user_session_id if user_session_id else sid,))
     else:
         username = random_username()
         avatar = random_avatar()

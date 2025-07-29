@@ -30,7 +30,6 @@ const profileAvatar = document.getElementById('profile-avatar');
 const profileStatus = document.getElementById('profile-status');
 const profileSave = document.getElementById('profile-save');
 const profileCancel = document.getElementById('profile-cancel');
-const themeToggle = document.getElementById('theme-toggle');
 const pinnedBar = document.getElementById('pinned-bar');
 const addServerModal = document.getElementById('add-server-modal');
 const addServerName = document.getElementById('add-server-name');
@@ -739,26 +738,6 @@ function formatTimestamp(ts) {
 function escapeHTML(str) {
   return str.replace(/[&<>'"]/g, tag => ({'&':'&amp;','<':'<','>':'>','\'':'&#39;','"':'"'}[tag]));
 }
-
-function setTheme(theme) {
-  if (theme === 'light') {
-    document.body.classList.add('theme-light');
-    themeToggle.textContent = '☀️';
-  } else {
-    document.body.classList.remove('theme-light');
-    themeToggle.textContent = '🌙';
-  }
-  localStorage.setItem('theme', theme);
-}
-
-themeToggle.onclick = () => {
-  const isLight = document.body.classList.contains('theme-light');
-  setTheme(isLight ? 'dark' : 'light');
-};
-
-// On load, restore theme
-const savedTheme = localStorage.getItem('theme');
-setTheme(savedTheme === 'light' ? 'light' : 'dark'); 
 
 socket.on('pinned_messages', data => {
   // Only update if in the current channel
