@@ -1,7 +1,17 @@
 console.log("✅ chat.js loaded");
 
+let messageEventCount = 0;
+let socketConnectCount = 0;
+let pinnedMessages = [];
 
 const socket = io();
+console.log('[DEBUG] Socket connection established');
+socketConnectCount++;
+
+socket.on('connect', () => {
+  socketConnectCount++;
+  console.log(`[DEBUG] Socket connected (${socketConnectCount} times):`, socket.id);
+});
 
 // DOM elements
 const serverSidebar = document.getElementById('server-sidebar');
@@ -162,9 +172,14 @@ socket.on('channel_list', data => {
   }
 });
 
+let messageIdSet = new Set();
+
 socket.on('joined_channel', data => {
   chatHeader.textContent = `${currentServer} / #${data.channel}`;
   chatForm.style.display = '';
+  // Clear message history and id set before loading new messages
+  clearMessageHistoryForCurrentChannel();
+  messageIdSet.clear();
   // Render messages for the joined channel from messageHistory
   const currentMessages = getMessageHistoryForCurrentChannel();
   renderMessages(currentMessages);
@@ -198,15 +213,28 @@ socket.on('profile_updated', data => {
 });
 
 // --- UI Events ---
+
+let isSendingMessage = false;
+
 chatForm.addEventListener('submit', function(e) {
   console.log('[DEBUG] Form submit event triggered');
   e.preventDefault();
+  if (isSendingMessage) {
+    console.log('[DEBUG] Message send in progress, ignoring duplicate submit');
+    return;
+  }
   const msg = messageInput.value.trim();
   if (msg && currentServer && currentChannel) {
+    isSendingMessage = true;
     // Generate a temporary unique id for the message
     const tempId = 'temp-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
     // Add the message to messageHistory for current channel and render immediately
     const currentMessages = getMessageHistoryForCurrentChannel();
+    // Remove any existing message with the same tempId to prevent duplicates
+    const existingIndex = currentMessages.findIndex(msg => msg.id === tempId);
+    if (existingIndex !== -1) {
+      currentMessages.splice(existingIndex, 1);
+    }
     currentMessages.push({
       username: myUsername,
       avatar: myAvatar,
@@ -224,9 +252,17 @@ chatForm.addEventListener('submit', function(e) {
       username: myUsername,
       avatar: myAvatar,
       server: currentServer,
-      channel: currentChannel
+      channel: currentChannel,
+      tempId: tempId
+    }, () => {
+      // Acknowledgement callback from server
+      isSendingMessage = false;
     });
     messageInput.value = '';
+    // Fallback to reset isSendingMessage after 3 seconds in case ack is missed
+    setTimeout(() => {
+      isSendingMessage = false;
+    }, 1000);
   } else {
     alert('Please select a server and channel before sending a message.');
   }
@@ -419,41 +455,24 @@ socket.on('message', data => {
 
   const currentMessages = getMessageHistoryForCurrentChannel();
 
-  // Replace the temp message if tempId exists
-  if (self && data.tempId) {
-    const index = currentMessages.findIndex(m => m.id === data.tempId);
-    if (index !== -1) {
-      currentMessages[index] = {
-        username: data.username,
-        avatar: data.avatar,
-        text: data.msg,
-        self,
-        id: data.id,
-        timestamp: data.timestamp,
-        status: data.status || ''
-      };
-      setMessageHistoryForCurrentChannel(currentMessages);
-      renderMessages(currentMessages);
-      return;
-    }
+  // Remove any message with the same id or tempId to prevent duplicates
+  const existingIndex = currentMessages.findIndex(msg => msg.id === data.id || (self && msg.id === data.tempId));
+  if (existingIndex !== -1) {
+    currentMessages.splice(existingIndex, 1);
   }
 
-  // Add message only if not already present
-  if (!currentMessages.some(msg => msg.id === data.id)) {
-    currentMessages.push({
-      username: data.username,
-      avatar: data.avatar,
-      text: data.msg,
-      self,
-      id: data.id,
-      timestamp: data.timestamp,
-      status: data.status || ''
-    });
-    setMessageHistoryForCurrentChannel(currentMessages);
-    renderMessages(currentMessages);
-  } else {
-    console.log('[DEBUG] Duplicate message ignored:', data);
-  }
+  // Add message
+  currentMessages.push({
+    username: data.username,
+    avatar: data.avatar,
+    text: data.msg,
+    self,
+    id: data.id,
+    timestamp: data.timestamp,
+    status: data.status || ''
+  });
+  setMessageHistoryForCurrentChannel(currentMessages);
+  renderMessages(currentMessages);
 });
 
 socket.on('message_update', data => {
@@ -559,19 +578,24 @@ function createMessageDiv(username, avatar, msg, self = false, msgId = null, tim
   }
   // Pin/unpin button
   if (msgId) {
-    const isPinned = pinnedMessages.some(m => m.id === msgId);
-    const pinBtn = document.createElement('button');
-    pinBtn.className = 'pin-btn' + (isPinned ? ' pinned' : '');
-    pinBtn.title = isPinned ? 'Unpin message' : 'Pin message';
-    pinBtn.innerHTML = '📌';
-    pinBtn.onclick = () => {
-      if (isPinned) {
-        socket.emit('unpin_message', { message_id: msgId });
-      } else {
-        socket.emit('pin_message', { message_id: msgId });
-      }
-    };
-    div.appendChild(pinBtn);
+    // Disable pin button for temporary message IDs starting with "temp-"
+    if (typeof msgId === 'string' && msgId.startsWith('temp-')) {
+      // Do not show pin button for temporary messages
+    } else {
+      const isPinned = pinnedMessages.some(m => m.id === msgId);
+      const pinBtn = document.createElement('button');
+      pinBtn.className = 'pin-btn' + (isPinned ? ' pinned' : '');
+      pinBtn.title = isPinned ? 'Unpin message' : 'Pin message';
+      pinBtn.innerHTML = '📌';
+      pinBtn.onclick = () => {
+        if (isPinned) {
+          socket.emit('unpin_message', { message_id: msgId });
+        } else {
+          socket.emit('pin_message', { message_id: msgId });
+        }
+      };
+      div.appendChild(pinBtn);
+    }
   }
   // Toast notification if this message mentions me (and not my own message)
   if (!self && myUsername && msg.toLowerCase().includes('@' + myUsername.toLowerCase())) {
@@ -747,6 +771,12 @@ socket.on('pinned_messages', data => {
 function renderPinnedBar() {
   pinnedBar.innerHTML = '';
   if (!pinnedMessages.length) return;
+  const header = document.createElement('div');
+  header.style.fontWeight = 'bold';
+  header.style.marginBottom = '0.5em';
+  header.style.color = '#fff';
+  header.textContent = 'Pinned Messages';
+  pinnedBar.appendChild(header);
   pinnedMessages.forEach(msg => {
     const div = document.createElement('div');
     div.className = 'pinned-msg';
