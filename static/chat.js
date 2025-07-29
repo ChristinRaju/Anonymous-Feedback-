@@ -62,8 +62,8 @@ socket.on('chat_cleared', () => {
 
 let myUsername = '';
 let myAvatar = '';
-let currentServer = null;
-let currentChannel = null;
+let currentServer = localStorage.getItem('currentServer') || null;
+let currentChannel = localStorage.getItem('currentChannel') || null;
 let typingTimeout = null;
 let myStatus = '';
 
@@ -73,16 +73,17 @@ function renderChannels(channels) {
     const div = document.createElement('div');
     div.className = 'channel' + (channel === currentChannel ? ' selected' : '');
     div.textContent = `# ${channel}`;
-    div.onclick = () => {
-      if (currentChannel !== channel) {
-        currentChannel = channel;
-        socket.emit('join_channel', { server: currentServer, channel });
-        renderChannels(channels);
-        messagesDiv.innerHTML = '';
-        chatHeader.textContent = `${currentServer} / #${channel}`;
-        chatForm.style.display = '';
-      }
-    };
+  div.onclick = () => {
+    if (currentChannel !== channel) {
+      currentChannel = channel;
+      localStorage.setItem('currentChannel', currentChannel);
+      socket.emit('join_channel', { server: currentServer, channel });
+      renderChannels(channels);
+      messagesDiv.innerHTML = '';
+      chatHeader.textContent = `${currentServer} / #${channel}`;
+      chatForm.style.display = '';
+    }
+  };
     channelList.appendChild(div);
   });
   // Add channel creation
@@ -154,18 +155,25 @@ console.log('[DEBUG] Waiting for server_list...');
 socket.on('server_list', data => {
   console.log('[RECEIVED] server_list:', data.servers);
   renderServers(data.servers);
-  // Automatically select the first server if none selected
-  if (!currentServer && data.servers.length > 0) {
+  // Automatically select the last selected server if available, else first server
+  if (currentServer && data.servers.includes(currentServer)) {
+    socket.emit('join_server', { server: currentServer });
+  } else if (data.servers.length > 0) {
     currentServer = data.servers[0];
+    localStorage.setItem('currentServer', currentServer);
     socket.emit('join_server', { server: currentServer });
   }
 });
 
 socket.on('channel_list', data => {
   renderChannels(data.channels);
-  // Automatically select the first channel if none selected
-  if (!currentChannel && data.channels.length > 0) {
+  // Automatically select the last selected channel if available, else first channel
+  if (currentChannel && data.channels.includes(currentChannel)) {
+    chatHeader.textContent = `${currentServer} / #${currentChannel}`;
+    chatForm.style.display = '';
+  } else if (data.channels.length > 0) {
     currentChannel = data.channels[0];
+    localStorage.setItem('currentChannel', currentChannel);
     chatHeader.textContent = `${currentServer} / #${currentChannel}`;
     chatForm.style.display = '';
   }
@@ -662,7 +670,9 @@ function renderServers(servers) {
     div.onclick = () => {
       if (currentServer !== server) {
         currentServer = server;
+        localStorage.setItem('currentServer', currentServer);
         currentChannel = null;
+        localStorage.removeItem('currentChannel');
         socket.emit('join_server', { server });
         renderServers(servers);
         messageHistory = [];
