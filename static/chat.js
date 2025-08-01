@@ -11,6 +11,11 @@ socketConnectCount++;
 socket.on('connect', () => {
   socketConnectCount++;
   console.log(`[DEBUG] Socket connected (${socketConnectCount} times):`, socket.id);
+  // On connect, join the last selected server
+  if (currentServer) {
+    console.log(`[DEBUG] Emitting join_server for server: ${currentServer}`);
+    socket.emit('join_server', { server: currentServer });
+  }
 });
 
 // DOM elements
@@ -66,6 +71,10 @@ let currentServer = localStorage.getItem('currentServer') || null;
 let currentChannel = localStorage.getItem('currentChannel') || null;
 let typingTimeout = null;
 let myStatus = '';
+
+// Buffer to hold messages received before session info is set
+let messageBuffer = [];
+let sessionReady = false;
 
 function renderChannels(channels) {
   channelList.innerHTML = '';
@@ -145,6 +154,31 @@ socket.on('session', data => {
   myUsername = data.username;
   myAvatar = data.avatar;
   myStatus = data.status || '';
+  sessionReady = true;
+  // Render buffered messages now that session info is available
+  if (messageBuffer.length > 0) {
+    const currentMessages = getMessageHistoryForCurrentChannel();
+    // Add buffered messages to currentMessages, avoiding duplicates
+    messageBuffer.forEach(data => {
+      const self = data.username === myUsername && data.avatar === myAvatar;
+      const existingIndex = currentMessages.findIndex(msg => msg.id === data.id || (self && msg.id === data.tempId));
+      if (existingIndex !== -1) {
+        currentMessages.splice(existingIndex, 1);
+      }
+      currentMessages.push({
+        username: data.username,
+        avatar: data.avatar,
+        text: data.msg,
+        self,
+        id: data.id,
+        timestamp: data.timestamp,
+        status: data.status || ''
+      });
+    });
+    setMessageHistoryForCurrentChannel(currentMessages);
+    renderMessages(currentMessages);
+    messageBuffer = [];
+  }
 });
 
 socket.on('connect', () => {
@@ -157,10 +191,13 @@ socket.on('server_list', data => {
   renderServers(data.servers);
   // Automatically select the last selected server if available, else first server
   if (currentServer && data.servers.includes(currentServer)) {
-    socket.emit('join_server', { server: currentServer });
+    // Emit join_server only if not already emitted on connect
+    // This avoids duplicate join_server emits
+    // So do nothing here
   } else if (data.servers.length > 0) {
     currentServer = data.servers[0];
     localStorage.setItem('currentServer', currentServer);
+    console.log(`[DEBUG] Emitting join_server for new server: ${currentServer}`);
     socket.emit('join_server', { server: currentServer });
   }
 });
@@ -171,11 +208,15 @@ socket.on('channel_list', data => {
   if (currentChannel && data.channels.includes(currentChannel)) {
     chatHeader.textContent = `${currentServer} / #${currentChannel}`;
     chatForm.style.display = '';
+    console.log(`[DEBUG] Emitting join_channel for channel: ${currentChannel}`);
+    socket.emit('join_channel', { server: currentServer, channel: currentChannel });
   } else if (data.channels.length > 0) {
     currentChannel = data.channels[0];
     localStorage.setItem('currentChannel', currentChannel);
     chatHeader.textContent = `${currentServer} / #${currentChannel}`;
     chatForm.style.display = '';
+    console.log(`[DEBUG] Emitting join_channel for new channel: ${currentChannel}`);
+    socket.emit('join_channel', { server: currentServer, channel: currentChannel });
   }
 });
 
@@ -185,8 +226,11 @@ socket.on('joined_channel', data => {
   chatHeader.textContent = `${currentServer} / #${data.channel}`;
   chatForm.style.display = '';
   // Clear message history and id set before loading new messages
-  clearMessageHistoryForCurrentChannel();
-  messageIdSet.clear();
+  // Only clear message history if switching channels
+  if (data.channel !== currentChannel) {
+    clearMessageHistoryForCurrentChannel();
+    messageIdSet.clear();
+  }
   // Render messages for the joined channel from messageHistory
   const currentMessages = getMessageHistoryForCurrentChannel();
   renderMessages(currentMessages);
@@ -458,6 +502,11 @@ function clearMessageHistoryForCurrentChannel() {
 
 socket.on('message', data => {
   console.log('[DEBUG] Received message:', data);
+  if (!sessionReady) {
+    // Buffer messages until session info is ready
+    messageBuffer.push(data);
+    return;
+  }
   const self = data.username === myUsername && data.avatar === myAvatar;
 
   const currentMessages = getMessageHistoryForCurrentChannel();
@@ -608,33 +657,31 @@ function createMessageDiv(username, avatar, msg, self = false, msgId = null, tim
   if (!self && myUsername && msg.toLowerCase().includes('@' + myUsername.toLowerCase())) {
     showToast(`You were mentioned by ${username}`);
   }
-  if (self && msgId) {
+  if (msgId) {
     const actions = document.createElement('span');
     actions.className = 'msg-actions';
     actions.style.marginLeft = '0.5em';
-    actions.innerHTML = `
-      <button class='msg-btn msg-edit' title='Edit'>✏️</button>
-      <button class='msg-btn msg-delete' title='Delete'>🗑️</button>
-      <button class='msg-btn msg-copy' title='Copy'>📋</button>
-      <button class='msg-btn msg-react' title='React'>😊</button>
-    `;
+    if (self) {
+      actions.innerHTML = `
+        <button class='msg-btn msg-edit' title='Edit'>✏️</button>
+        <button class='msg-btn msg-delete' title='Delete'>🗑️</button>
+        <button class='msg-btn msg-copy' title='Copy'>📋</button>
+        <button class='msg-btn msg-react' title='React'>😊</button>
+      `;
+      actions.querySelector('.msg-edit').onclick = () => editMessage(msgId, div, msg);
+      actions.querySelector('.msg-delete').onclick = () => deleteMessage(msgId);
+      actions.querySelector('.msg-copy').onclick = () => copyText(msg);
+      actions.querySelector('.msg-react').onclick = () => {
+        const emoji = prompt('React with emoji:', '😊');
+        if (emoji && emoji.length <= 2) {
+          socket.emit('add_reaction', { message_id: msgId, emoji });
+        }
+      };
+    } else {
+      actions.innerHTML = `<button class='msg-btn msg-copy' title='Copy'>📋</button>`;
+      actions.querySelector('.msg-copy').onclick = () => copyText(msg);
+    }
     div.appendChild(actions);
-    actions.querySelector('.msg-edit').onclick = () => editMessage(msgId, div, msg);
-    actions.querySelector('.msg-delete').onclick = () => deleteMessage(msgId);
-    actions.querySelector('.msg-copy').onclick = () => copyText(msg);
-    actions.querySelector('.msg-react').onclick = () => {
-      const emoji = prompt('React with emoji:', '😊');
-      if (emoji && emoji.length <= 2) {
-        socket.emit('add_reaction', { message_id: msgId, emoji });
-      }
-    };
-  } else if (msgId) {
-    const actions = document.createElement('span');
-    actions.className = 'msg-actions';
-    actions.style.marginLeft = '0.5em';
-    actions.innerHTML = `<button class='msg-btn msg-copy' title='Copy'>📋</button>`;
-    div.appendChild(actions);
-    actions.querySelector('.msg-copy').onclick = () => copyText(msg);
   }
   // Reactions bar
   if (msgId) {
