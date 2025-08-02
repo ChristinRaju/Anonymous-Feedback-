@@ -172,7 +172,8 @@ socket.on('session', data => {
         self,
         id: data.id,
         timestamp: data.timestamp,
-        status: data.status || ''
+        status: data.status || '',
+        reactions: data.reactions || {}
       });
     });
     setMessageHistoryForCurrentChannel(currentMessages);
@@ -293,7 +294,8 @@ chatForm.addEventListener('submit', function(e) {
       self: true,
       id: tempId,
       timestamp: new Date().toISOString(),
-      status: ''
+      status: '',
+      reactions: {}
     });
     setMessageHistoryForCurrentChannel(currentMessages);
     renderMessages(currentMessages);
@@ -466,7 +468,7 @@ function renderMessages(messageList) {
       groupDiv.className = 'chat-message-group fade-in';
       messagesDiv.appendChild(groupDiv);
     }
-    const messageDiv = createMessageDiv(msg.username, msg.avatar, msg.text, msg.self, msg.id, msg.timestamp, msg.status);
+    const messageDiv = createMessageDiv(msg.username, msg.avatar, msg.text, msg.self, msg.id, msg.timestamp, msg.status, msg.reactions);
     if (groupDiv) groupDiv.appendChild(messageDiv);
     lastUser = msg;
   });
@@ -525,7 +527,8 @@ socket.on('message', data => {
     self,
     id: data.id,
     timestamp: data.timestamp,
-    status: data.status || ''
+    status: data.status || '',
+    reactions: data.reactions || {}
   });
   setMessageHistoryForCurrentChannel(currentMessages);
   renderMessages(currentMessages);
@@ -553,9 +556,19 @@ socket.on('message_update', data => {
 });
 
 socket.on('reactions_update', data => {
+  console.log('Reactions update received:', data);
   messageReactions[data.message_id] = data.reactions;
+  
+  // Update the message in messageHistory with the new reactions
+  const currentMessages = getMessageHistoryForCurrentChannel();
+  const messageIndex = currentMessages.findIndex(msg => msg.id == data.message_id);
+  if (messageIndex !== -1) {
+    currentMessages[messageIndex].reactions = data.reactions;
+    setMessageHistoryForCurrentChannel(currentMessages);
+  }
+  
   // Re-render messages to update reactions
-  renderMessages(messageHistory);
+  renderMessages(currentMessages);
 });
 
 // Default emoji options for reactions
@@ -567,40 +580,134 @@ let messageReactions = {};
 function createReactionsBar(msgId, reactions) {
   const bar = document.createElement('div');
   bar.className = 'reactions-bar';
+  
+  // Always show the bar, even if empty
+  const reactionEntries = Object.entries(reactions || {});
+  
   // Render each reaction with count and tooltip of users
-  Object.entries(reactions || {}).forEach(([emoji, users]) => {
+  reactionEntries.forEach(([emoji, users]) => {
     const btn = document.createElement('button');
     btn.className = 'reaction-btn';
     btn.textContent = `${emoji} ${users.length}`;
     // Tooltip: show usernames/avatars
     btn.title = users.map(u => `${u.avatar} ${u.username}`).join(', ');
     // Highlight if I have reacted
-    if (hasReacted(users)) btn.classList.add('selected');
+    if (hasReacted(users)) {
+      btn.classList.add('selected');
+    }
     btn.onclick = () => {
       if (hasReacted(users)) {
         socket.emit('remove_reaction', { message_id: msgId, emoji });
+        // Immediately remove from UI
+        const currentMessages = getMessageHistoryForCurrentChannel();
+        const messageIndex = currentMessages.findIndex(msg => msg.id == msgId);
+        if (messageIndex !== -1 && currentMessages[messageIndex].reactions && currentMessages[messageIndex].reactions[emoji]) {
+          currentMessages[messageIndex].reactions[emoji] = currentMessages[messageIndex].reactions[emoji].filter(
+            u => !(u.username === myUsername && u.avatar === myAvatar)
+          );
+          // Remove emoji if no users left
+          if (currentMessages[messageIndex].reactions[emoji].length === 0) {
+            delete currentMessages[messageIndex].reactions[emoji];
+          }
+          setMessageHistoryForCurrentChannel(currentMessages);
+          renderMessages(currentMessages);
+        }
       } else {
         socket.emit('add_reaction', { message_id: msgId, emoji });
+        // Immediately add to UI
+        const currentMessages = getMessageHistoryForCurrentChannel();
+        const messageIndex = currentMessages.findIndex(msg => msg.id == msgId);
+        if (messageIndex !== -1) {
+          if (!currentMessages[messageIndex].reactions) {
+            currentMessages[messageIndex].reactions = {};
+          }
+          if (!currentMessages[messageIndex].reactions[emoji]) {
+            currentMessages[messageIndex].reactions[emoji] = [];
+          }
+          const userReaction = {
+            username: myUsername,
+            avatar: myAvatar
+          };
+          currentMessages[messageIndex].reactions[emoji].push(userReaction);
+          setMessageHistoryForCurrentChannel(currentMessages);
+          renderMessages(currentMessages);
+        }
       }
     };
     bar.appendChild(btn);
   });
-  // Add a + button for new emoji
-  const addBtn = document.createElement('button');
-  addBtn.className = 'reaction-btn';
-  addBtn.textContent = '+';
-  addBtn.onclick = () => {
-    const emoji = prompt('React with emoji:', '😊');
-    if (emoji && emoji.length <= 2) {
-      socket.emit('add_reaction', { message_id: msgId, emoji });
-    }
-  };
-  bar.appendChild(addBtn);
+
   return bar;
 }
 
 function hasReacted(users) {
   return users && users.some(u => u.username === myUsername && u.avatar === myAvatar);
+}
+
+function showReactionPicker(msgId, actionsElement) {
+  // Remove any existing reaction picker
+  const existingPicker = document.querySelector('.reaction-picker');
+  if (existingPicker) {
+    existingPicker.remove();
+  }
+
+  // Create reaction picker
+  const picker = document.createElement('div');
+  picker.className = 'reaction-picker';
+
+  // Add default reaction buttons
+  DEFAULT_REACTIONS.forEach(emoji => {
+    const btn = document.createElement('button');
+    btn.textContent = emoji;
+    btn.onclick = () => {
+      socket.emit('add_reaction', { message_id: msgId, emoji });
+      picker.remove();
+      
+      // Immediately update the UI to show the reaction
+      const currentMessages = getMessageHistoryForCurrentChannel();
+      const messageIndex = currentMessages.findIndex(msg => msg.id == msgId);
+      if (messageIndex !== -1) {
+        // Initialize reactions if not exists
+        if (!currentMessages[messageIndex].reactions) {
+          currentMessages[messageIndex].reactions = {};
+        }
+        if (!currentMessages[messageIndex].reactions[emoji]) {
+          currentMessages[messageIndex].reactions[emoji] = [];
+        }
+        // Add current user to the reaction
+        const userReaction = {
+          username: myUsername,
+          avatar: myAvatar
+        };
+        currentMessages[messageIndex].reactions[emoji].push(userReaction);
+        setMessageHistoryForCurrentChannel(currentMessages);
+        renderMessages(currentMessages);
+      }
+    };
+    picker.appendChild(btn);
+  });
+
+  // Position the picker near the reaction button
+  const reactBtn = actionsElement.querySelector('.msg-react');
+  const rect = reactBtn.getBoundingClientRect();
+  picker.style.top = `${rect.bottom + 5}px`;
+  picker.style.left = `${rect.left}px`;
+
+  // Add to body
+  document.body.appendChild(picker);
+
+  // Close picker when clicking outside
+  const closePicker = (e) => {
+    if (!picker.contains(e.target) && !reactBtn.contains(e.target)) {
+      picker.remove();
+      document.removeEventListener('click', closePicker);
+    }
+  };
+  
+  // Delay adding the event listener to avoid immediate closure
+  setTimeout(() => {
+    document.addEventListener('click', closePicker);
+  }, 100);
 }
 
 // Update createMessageDiv to render reactions bar
@@ -671,22 +778,22 @@ function createMessageDiv(username, avatar, msg, self = false, msgId = null, tim
       actions.querySelector('.msg-edit').onclick = () => editMessage(msgId, div, msg);
       actions.querySelector('.msg-delete').onclick = () => deleteMessage(msgId);
       actions.querySelector('.msg-copy').onclick = () => copyText(msg);
-      actions.querySelector('.msg-react').onclick = () => {
-        const emoji = prompt('React with emoji:', '😊');
-        if (emoji && emoji.length <= 2) {
-          socket.emit('add_reaction', { message_id: msgId, emoji });
-        }
-      };
+      actions.querySelector('.msg-react').onclick = () => showReactionPicker(msgId, actions);
     } else {
-      actions.innerHTML = `<button class='msg-btn msg-copy' title='Copy'>📋</button>`;
+      actions.innerHTML = `
+        <button class='msg-btn msg-copy' title='Copy'>📋</button>
+        <button class='msg-btn msg-react' title='React'>😊</button>
+      `;
       actions.querySelector('.msg-copy').onclick = () => copyText(msg);
+      actions.querySelector('.msg-react').onclick = () => showReactionPicker(msgId, actions);
     }
     div.appendChild(actions);
   }
   // Reactions bar
   if (msgId) {
-    const reactions = messageReactions[msgId] || {};
-    div.appendChild(createReactionsBar(msgId, reactions));
+    const messageReactionsData = messageReactions[msgId] || reactions || {};
+    const reactionsBar = createReactionsBar(msgId, messageReactionsData);
+    div.appendChild(reactionsBar);
   }
   return div;
 }
@@ -794,6 +901,25 @@ function formatTimestamp(ts) {
 
 function escapeHTML(str) {
   return str.replace(/[&<>'"]/g, tag => ({'&':'&amp;','<':'<','>':'>','\'':'&#39;','"':'"'}[tag]));
+}
+
+function showToast(message) {
+  // Create toast element if it doesn't exist
+  let toast = document.getElementById('toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'toast';
+    toast.className = 'toast';
+    document.body.appendChild(toast);
+  }
+  
+  toast.textContent = message;
+  toast.classList.add('show');
+  
+  // Hide after 3 seconds
+  setTimeout(() => {
+    toast.classList.remove('show');
+  }, 3000);
 }
 
 socket.on('pinned_messages', data => {
