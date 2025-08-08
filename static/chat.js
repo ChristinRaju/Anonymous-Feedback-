@@ -91,6 +91,9 @@ function renderChannels(channels) {
       messagesDiv.innerHTML = '';
       chatHeader.textContent = `${currentServer} / #${channel}`;
       chatForm.style.display = '';
+      // Clear typing indicators when switching channels
+      typingUsers.clear();
+      updateTypingIndicator();
     }
   };
     channelList.appendChild(div);
@@ -237,14 +240,42 @@ socket.on('joined_channel', data => {
   renderMessages(currentMessages);
 });
 
+let typingUsers = new Set();
+
 socket.on('typing', data => {
-  typingIndicator.textContent = `${data.user} is typing...`;
-  typingIndicator.style.display = '';
-  clearTimeout(typingTimeout);
-  typingTimeout = setTimeout(() => {
-    typingIndicator.style.display = 'none';
-  }, 1200);
+  if (data.user && data.user !== myUsername) {
+    typingUsers.add(data.user);
+    updateTypingIndicator();
+  }
 });
+
+socket.on('stop_typing', data => {
+  if (data.user && data.user !== myUsername) {
+    typingUsers.delete(data.user);
+    updateTypingIndicator();
+  }
+});
+
+function updateTypingIndicator() {
+  if (typingUsers.size === 0) {
+    typingIndicator.style.display = 'none';
+    typingIndicator.innerHTML = '';
+  } else if (typingUsers.size === 1) {
+    const user = Array.from(typingUsers)[0];
+    typingIndicator.innerHTML = `<span class="typing-user">${user}</span> is typing<span class="typing-dots">...</span>`;
+    typingIndicator.style.display = 'block';
+  } else if (typingUsers.size === 2) {
+    const users = Array.from(typingUsers);
+    typingIndicator.innerHTML = `<span class="typing-user">${users[0]}</span> and <span class="typing-user">${users[1]}</span> are typing<span class="typing-dots">...</span>`;
+    typingIndicator.style.display = 'block';
+  } else {
+    const users = Array.from(typingUsers);
+    const firstUser = users[0];
+    const othersCount = users.length - 1;
+    typingIndicator.innerHTML = `<span class="typing-user">${firstUser}</span> and ${othersCount} others are typing<span class="typing-dots">...</span>`;
+    typingIndicator.style.display = 'block';
+  }
+}
 
 // Store the latest user list for status lookup in messages
 let latestUserList = [];
@@ -324,6 +355,24 @@ chatForm.addEventListener('submit', function(e) {
 messageInput.addEventListener('input', function() {
   if (currentServer && currentChannel) {
     socket.emit('typing', {});
+    
+    // Clear existing timeout
+    if (typingTimeout) {
+      clearTimeout(typingTimeout);
+    }
+    
+    // Set new timeout to stop typing indicator
+    typingTimeout = setTimeout(() => {
+      socket.emit('stop_typing', {});
+    }, 1000);
+  }
+});
+
+// Stop typing when input loses focus
+messageInput.addEventListener('blur', function() {
+  if (typingTimeout) {
+    clearTimeout(typingTimeout);
+    socket.emit('stop_typing', {});
   }
 });
 
@@ -453,7 +502,54 @@ function deleteMessage(msgId) {
 }
 
 function copyText(msg) {
-  navigator.clipboard.writeText(msg);
+  // Check if the Clipboard API is available and we have permissions
+  if (navigator.clipboard && window.isSecureContext) {
+    // Use modern Clipboard API
+    navigator.clipboard.writeText(msg).then(
+      () => {
+        console.log('[DEBUG] Message copied to clipboard successfully');
+        showToast('Message copied to clipboard!');
+      },
+      (err) => {
+        console.error('[ERROR] Failed to copy message:', err);
+        fallbackCopyText(msg);
+      }
+    );
+  } else {
+    // Fallback for older browsers or insecure contexts
+    fallbackCopyText(msg);
+  }
+}
+
+// Fallback copy function using the older method
+function fallbackCopyText(msg) {
+  try {
+    // Create a temporary textarea element
+    const textArea = document.createElement('textarea');
+    textArea.value = msg;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    textArea.style.top = '-9999px';
+    textArea.style.opacity = '0';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    
+    // Try to copy using the older execCommand method
+    const successful = document.execCommand('copy');
+    document.body.removeChild(textArea);
+    
+    if (successful) {
+      console.log('[DEBUG] Message copied to clipboard using fallback method');
+      showToast('Message copied to clipboard!');
+    } else {
+      console.error('[ERROR] Fallback copy method failed');
+      showToast('Failed to copy message. Please try selecting and copying manually.');
+    }
+  } catch (err) {
+    console.error('[ERROR] Copy operation failed:', err);
+    showToast('Copy not supported. Please select and copy the text manually.');
+  }
 }
 
 // Message grouping
@@ -561,14 +657,15 @@ socket.on('reactions_update', data => {
   
   // Update the message in messageHistory with the new reactions
   const currentMessages = getMessageHistoryForCurrentChannel();
-  const messageIndex = currentMessages.findIndex(msg => msg.id == data.message_id);
+  const messageIndex = currentMessages.findIndex(msg => String(msg.id) === String(data.message_id));
   if (messageIndex !== -1) {
     currentMessages[messageIndex].reactions = data.reactions;
     setMessageHistoryForCurrentChannel(currentMessages);
+    // Re-render messages to update reactions
+    renderMessages(currentMessages);
+  } else {
+    console.log('Message not found in current channel for reaction update:', data.message_id);
   }
-  
-  // Re-render messages to update reactions
-  renderMessages(currentMessages);
 });
 
 // Default emoji options for reactions
@@ -600,7 +697,7 @@ function createReactionsBar(msgId, reactions) {
         socket.emit('remove_reaction', { message_id: msgId, emoji });
         // Immediately remove from UI
         const currentMessages = getMessageHistoryForCurrentChannel();
-        const messageIndex = currentMessages.findIndex(msg => msg.id == msgId);
+        const messageIndex = currentMessages.findIndex(msg => String(msg.id) === String(msgId));
         if (messageIndex !== -1 && currentMessages[messageIndex].reactions && currentMessages[messageIndex].reactions[emoji]) {
           currentMessages[messageIndex].reactions[emoji] = currentMessages[messageIndex].reactions[emoji].filter(
             u => !(u.username === myUsername && u.avatar === myAvatar)
@@ -616,7 +713,7 @@ function createReactionsBar(msgId, reactions) {
         socket.emit('add_reaction', { message_id: msgId, emoji });
         // Immediately add to UI
         const currentMessages = getMessageHistoryForCurrentChannel();
-        const messageIndex = currentMessages.findIndex(msg => msg.id == msgId);
+        const messageIndex = currentMessages.findIndex(msg => String(msg.id) === String(msgId));
         if (messageIndex !== -1) {
           if (!currentMessages[messageIndex].reactions) {
             currentMessages[messageIndex].reactions = {};
@@ -665,7 +762,7 @@ function showReactionPicker(msgId, actionsElement) {
       
       // Immediately update the UI to show the reaction
       const currentMessages = getMessageHistoryForCurrentChannel();
-      const messageIndex = currentMessages.findIndex(msg => msg.id == msgId);
+      const messageIndex = currentMessages.findIndex(msg => String(msg.id) === String(msgId));
       if (messageIndex !== -1) {
         // Initialize reactions if not exists
         if (!currentMessages[messageIndex].reactions) {
@@ -835,6 +932,9 @@ function renderServers(servers) {
         chatForm.style.display = 'none';
         channelList.innerHTML = '';
         userListDiv.innerHTML = '';
+        // Clear typing indicators when switching servers
+        typingUsers.clear();
+        updateTypingIndicator();
       }
     };
 
